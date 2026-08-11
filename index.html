@@ -12,12 +12,10 @@
 *{margin:0;padding:0;box-sizing:border-box;user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent;}
 html,body{width:100%;height:100vh;height:100dvh;background:var(--bg-deep);overflow:hidden;touch-action:manipulation;font-family:var(--font);}
 @media(prefers-reduced-motion:reduce){
-  .star{animation:none!important;}
-  .mote{animation:none!important;transform:translateY(0)!important;opacity:.4!important;}
   .aurora{animation:none!important;}
   .line{transition:none!important;}
 }
-#bg-canvas{position:fixed;inset:0;z-index:0;display:block;pointer-events:none;}
+#bg-canvas{position:fixed;inset:0;z-index:2;display:block;pointer-events:none;}
 .aurora-area{position:fixed;inset:0;z-index:1;pointer-events:none;overflow:hidden;}
 .aurora{position:absolute;border-radius:50%;filter:blur(60px);opacity:.35;mix-blend-mode:screen;will-change:opacity,transform;animation:aurora-pulse 6s ease-in-out infinite alternate;}
 .aurora.a1{width:55vw;height:55vw;background:#C77DFF;top:-10%;left:-15%;animation-delay:0s;}
@@ -65,6 +63,21 @@ html,body{width:100%;height:100vh;height:100dvh;background:var(--bg-deep);overfl
   font-weight:500;
   text-shadow:0 0 8px rgba(255,46,99,.55),0 0 18px rgba(199,125,255,.4),0 1px 2px rgba(0,0,0,.6);
   animation:pulse-ring 3s ease-in-out infinite alternate;
+  text-align:center;
+}
+#overlay .sub-caption{
+  position:absolute;
+  bottom:17%;
+  left:50%;
+  transform:translateX(-50%);
+  font-size:.78rem;
+  color:rgba(255,255,255,.55);
+  letter-spacing:.12em;
+  font-family:var(--font);
+  font-weight:300;
+  text-shadow:0 0 6px rgba(199,125,255,.3),0 1px 2px rgba(0,0,0,.5);
+  text-align:center;
+  white-space:nowrap;
 }
 #bottom-bar{
   position:fixed;bottom:0;left:0;right:0;z-index:40;
@@ -117,6 +130,7 @@ canvas id="bg-canvas"></canvas>
     <span class="heart" aria-hidden="true">❤</span>
   </button>
   <span class="caption">press play</span>
+  <span class="sub-caption">🎧 headphones on</span>
 </div>
 
 <div id="end-overlay" role="dialog" aria-label="Song ended">
@@ -373,35 +387,41 @@ resizeCanvas();
 window.addEventListener('resize', resizeCanvas);
 
 function initStars() {
-  // ~2x density for OLED visibility, brighter & slightly larger
-  const count = Math.max(400, Math.floor((window.innerWidth * window.innerHeight) / 4500));
+  // Density tuned for visibility on phone OLED at 3x DPR.
+  // ~10% are "bright" stars (2–3px) — the rest are 0.8–2px.
+  // Palette tints distributed across #FFFFFF, #C77DFF, #4DA6FF, #FFB347.
+  const count = Math.max(150, Math.floor((window.innerWidth * innerHeight) / 4500));
   stars = [];
+  const palette = ['#FFFFFF', '#C77DFF', '#4DA6FF', '#FFB347'];
   for (let i = 0; i < count; i++) {
+    const isBright = Math.random() < 0.10;
     stars.push({
       x: Math.random() * canvas.width,
       y: Math.random() * canvas.height,
-      r: Math.random() * 1.2 + .5,
-      baseAlpha: Math.random() * .35 + .55, // higher floor — visible on OLED
-      alpha: Math.random() * .35 + .55,
-      speed: Math.random() * .0035 + .0025,
-      dir: Math.random() > .5 ? 1 : -1,
-      color: Math.random() < .12 ? '#bfe0ff' : '#ffffff'
+      r: isBright ? (Math.random() * 1.0 + 2.0) : (Math.random() * 1.2 + 0.8),
+      phase: Math.random() * Math.PI * 2,
+      speed: Math.random() * 1.5 + 0.6,
+      baseAlpha: Math.random() * 0.25 + 0.45,  // floor 0.45 — never dimmer than that
+      alpha: Math.random() * 0.4 + 0.55,        // start between 0.55–0.95
+      color: palette[Math.floor(Math.random() * (isBright ? 4 : 1))],  // bright stars tinted, regular stars white
+      bright: isBright
     });
   }
 }
 
 function initMotes() {
+  // 22 motes in palette colors, opacity 0.5–0.7, slow upward drift
   const colors = ['#FFB347','#4DA6FF','#FF4D88','#C77DFF'];
   motes = [];
-  for (let i = 0; i < 24; i++) {
+  for (let i = 0; i < 22; i++) {
     motes.push({
       x: Math.random() * canvas.width,
       y: Math.random() * canvas.height,
-      r: Math.random() * 8 + 6,
+      r: Math.random() * 3 + 3,             // 3–6px per spec
       color: colors[i % colors.length],
-      dy: -(Math.random() * .3 + .1),
-      dx: (Math.random() - .5) * .2,
-      opacity: Math.random() * .35 + .15
+      dy: -(Math.random() * 0.25 + 0.08),  // slow upward drift
+      dx: (Math.random() - 0.5) * 0.15,
+      opacity: Math.random() * 0.2 + 0.5   // 0.5–0.7
     });
   }
 }
@@ -415,42 +435,85 @@ function drawBackground() {
   ctxC.fillStyle = grad;
   ctxC.fillRect(0, 0, w, h);
 
-  // Stars — brighter, larger, with subtle blue tint for variety
+  // Update twinkle phase (drives sine oscillation per-star)
+  const tNow = performance.now() / 1000;
+  const reducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // Stars — sine-wave twinkle, never below 0.35, glow halos via shadowBlur
   for (const s of stars) {
-    s.alpha += s.dir * s.speed;
-    if (s.alpha > 1.0) { s.dir = -1; }
-    if (s.alpha < s.baseAlpha * .55) { s.dir = 1; }
-    ctxC.beginPath();
-    ctxC.arc(s.x, s.y, s.r, 0, Math.PI * 2);
-    ctxC.fillStyle = s.color === '#bfe0ff'
-      ? `rgba(191,224,255,${s.alpha})`
-      : `rgba(255,255,255,${s.alpha})`;
-    ctxC.fill();
-    // Glow halo for brighter stars
-    if (s.r > 1.0) {
+    // Oscillate alpha between baseAlpha and 1.0 using sine, never dropping below 0.35
+    const osc = reducedMotion ? 0.7 : (Math.sin(tNow * s.speed + s.phase) + 1) * 0.5;
+    s.alpha = Math.max(0.35, s.baseAlpha + osc * (1.0 - s.baseAlpha));
+
+    if (s.bright) {
+      // Bright stars: real canvas glow via shadowBlur
+      const [rr, gg, bb] = hexToRgb(s.color);
+      ctxC.save();
+      ctxC.shadowColor = `rgba(${rr},${gg},${bb},${s.alpha})`;
+      ctxC.shadowBlur = 6 + s.r;        // 6–8+ blur based on size
       ctxC.beginPath();
-      ctxC.arc(s.x, s.y, s.r * 2.2, 0, Math.PI * 2);
-      ctxC.fillStyle = s.color === '#bfe0ff'
-        ? `rgba(191,224,255,${s.alpha * .18})`
-        : `rgba(255,255,255,${s.alpha * .18})`;
+      ctxC.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+      ctxC.fillStyle = `rgba(${rr},${gg},${bb},${s.alpha})`;
       ctxC.fill();
+      ctxC.restore();
+    } else {
+      // Regular stars: simple fill, slight halo for >1.5px ones
+      const c = s.color === '#FFFFFF'
+        ? `rgba(255,255,255,${s.alpha})`
+        : s.color === '#C77DFF'
+        ? `rgba(199,125,255,${s.alpha})`
+        : s.color === '#4DA6FF'
+        ? `rgba(77,166,255,${s.alpha})`
+        : `rgba(255,179,71,${s.alpha})`;
+      ctxC.beginPath();
+      ctxC.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+      ctxC.fillStyle = c;
+      ctxC.fill();
+      if (s.r > 1.4) {
+        // soft halo for medium stars
+        ctxC.save();
+        ctxC.shadowColor = c;
+        ctxC.shadowBlur = 3;
+        ctxC.beginPath();
+        ctxC.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+        ctxC.fillStyle = c;
+        ctxC.fill();
+        ctxC.restore();
+      }
     }
   }
 
-  // Motes
+  // Motes — palette colors, soft glow, drift upward, wrap
   for (const m of motes) {
-    m.y += m.dy;
-    m.x += m.dx;
-    if (m.y < -m.r) m.y = h + m.r;
-    if (m.x < -m.r) m.x = w + m.r;
-    if (m.x > w + m.r) m.x = -m.r;
+    if (!reducedMotion) {
+      m.y += m.dy;
+      m.x += m.dx;
+      if (m.y < -m.r * 2) m.y = h + m.r;
+      if (m.x < -m.r * 2) m.x = w + m.r;
+      if (m.x > w + m.r * 2) m.x = -m.r;
+    }
+    const [rr, gg, bb] = hexToRgb(m.color);
+    ctxC.save();
+    ctxC.shadowColor = `rgba(${rr},${gg},${bb},${m.opacity * 0.6})`;
+    ctxC.shadowBlur = 4;
     ctxC.beginPath();
     ctxC.arc(m.x, m.y, m.r, 0, Math.PI * 2);
-    ctxC.fillStyle = m.color + Math.round(m.opacity * 255).toString(16).padStart(2, '0');
+    ctxC.fillStyle = `rgba(${rr},${gg},${bb},${m.opacity})`;
     ctxC.fill();
+    ctxC.restore();
   }
 
   requestAnimationFrame(drawBackground);
+}
+
+// Helper: turn #RRGGBB into [r,g,b] ints
+function hexToRgb(hex) {
+  const h = hex.replace('#', '');
+  return [
+    parseInt(h.substring(0, 2), 16),
+    parseInt(h.substring(2, 4), 16),
+    parseInt(h.substring(4, 6), 16)
+  ];
 }
 
 initStars();
